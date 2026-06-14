@@ -17,11 +17,45 @@ description: >
 
 Work with 700+ volumes of traditional Chinese medicine classical texts.
 
+## Setup
+
+The skill searches `.txt` files in a **古籍目录**. You have two ways to point to it:
+
+### Option 1: Default path (recommended)
+
+Put your 700-TXT collection next to this skill folder:
+
+```
+skills/
+├── tcm-classics-assistant/   ← this skill
+│   ├── SKILL.md
+│   ├── scripts/search_texts.py
+│   └── ...
+└── 中医古籍700本TXT/          ← your text files
+    ├── 000-神农本草经-清-孙星衍.txt
+    ├── 001-吴普本草-晋-吴普.txt
+    └── ...
+```
+
+### Option 2: Environment variable
+
+Set `TCM_TXT_DIR` to your custom path:
+
+```powershell
+$env:TCM_TXT_DIR = "D:\my-tcm-texts"
+```
+
+### Option 3: Symbolic link
+
+```powershell
+New-Item -ItemType Junction -Path "$env:USERPROFILE\.codex\skills\中医古籍700本TXT" -Target "你的古籍目录路径"
+```
+
 ## Text Corpus
 
-- **Location**: `../中医古籍700本TXT/`
 - **Encoding**: GBK (majority), UTF-16LE, UTF-8-BOM (auto-detected)
 - **Total**: 700+ classical medical texts spanning Han dynasty through Qing dynasty
+- **File naming**: `编号-书名-朝代-作者.txt`
 
 ### Primary Categories
 
@@ -43,7 +77,7 @@ Work with 700+ volumes of traditional Chinese medicine classical texts.
 
 ## Search Tool
 
-Use `scripts/search_texts.py` to locate relevant classical passages. Always run the search BEFORE attempting to answer TCM questions.
+Always run the search BEFORE answering TCM questions:
 
 ```
 python scripts/search_texts.py "<query>" [--max-results 15] [--category CAT] [--json]
@@ -59,7 +93,7 @@ python scripts/search_texts.py --list-texts [CATEGORY]
    python scripts/search_texts.py "桂枝汤" --max-results 10
    ```
 
-2. **Multi-keyword (all mode)**: narrow results when combining symptoms/herbs/diagnosis
+2. **Multi-keyword (all mode)**: narrow results by requiring all terms
    ```
    python scripts/search_texts.py --keywords "阴虚" "潮热" "盗汗" --mode all --max-results 5
    ```
@@ -69,25 +103,25 @@ python scripts/search_texts.py --list-texts [CATEGORY]
    python scripts/search_texts.py "头痛" --category 伤寒 --max-results 8
    ```
 
-4. **Broad exploration**: when unsure where to look, omit category filter
+4. **Broad exploration**: omit category filter when unsure where to look
 
 ### After searching, ALWAYS:
 - Read the most relevant full text passage using `Get-Content` with proper encoding
 - Cross-reference multiple texts from different eras/categories
 - Cite the source text name and dynasty/author when presenting findings
 
-## Domain Knowledge
+## TCM Domain Reference
 
-### TCM Theoretical Framework
+### Theoretical Framework
 
-- **八纲辨证** (Eight-Principle Differentiation): 阴阳, 表里, 寒热, 虚实
-- **脏腑辨证** (Zang-Fu Differentiation): 五脏 (心肝脾肺肾) + 六腑 (胆胃大肠小肠膀胱三焦)
-- **六经辨证** (Six-Channel Differentiation): 太阳, 阳明, 少阳, 太阴, 少阴, 厥阴 — from 伤寒论
-- **卫气营血辨证** (Four-Level Differentiation): 卫, 气, 营, 血 — from 温病学
+- **八纲辨证** (Eight-Principle): 阴阳, 表里, 寒热, 虚实
+- **脏腑辨证** (Zang-Fu): 五脏 (心肝脾肺肾) + 六腑 (胆胃大肠小肠膀胱三焦)
+- **六经辨证** (Six-Channel): 太阳, 阳明, 少阳, 太阴, 少阴, 厥阴 — 伤寒论
+- **卫气营血辨证** (Four-Level): 卫, 气, 营, 血 — 温病学
 - **气血津液辨证**: Qi, Blood, Body Fluids
-- **病因** (Etiology): 六淫 (风,寒,暑,湿,燥,火) + 七情 (喜怒忧思悲恐惊)
+- **病因** (Etiology): 六淫 (风寒暑湿燥火) + 七情 (喜怒忧思悲恐惊)
 
-### Key Classical Texts to Prioritize
+### Key Classical Texts
 
 | Era | Text | Author | Domain |
 |---|---|---|---|
@@ -114,8 +148,7 @@ python scripts/search_texts.py --list-texts [CATEGORY]
 
 ### Important Notes
 
-- Classical Chinese medical texts use specialized terminology that may differ from modern usage
-- Ming-Qing era texts often comment on and refine earlier Han-Tang theories
-- 本草 texts describe herbs (性味归经, 功效主治); 方剂 texts describe formula compositions
-- Different medical schools (伤寒派, 温病派, 补土派, etc.) may have conflicting views — present both
-- Always distinguish between classical theory and personal opinion
+- Classical Chinese medical texts use specialized terminology
+- Ming-Qing era texts often comment on earlier Han-Tang theories
+- Different medical schools (伤寒派, 温病派, 补土派) may disagree — present both
+- Always distinguish between classical source and personal opinion

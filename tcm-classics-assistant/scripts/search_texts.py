@@ -3,6 +3,9 @@
 
 Supports GBK, UTF-8, UTF-16LE encoded Chinese text files.
 
+古籍目录默认: 此脚本所在目录的上级目录下的 "中医古籍700本TXT/"
+也可通过 TCM_TXT_DIR 环境变量指定路径。
+
 Usage:
     python search_texts.py "<query>" [--max-results N] [--context-lines N] [--category CAT]
     python search_texts.py --list-categories
@@ -17,7 +20,10 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SKILL_DIR = SCRIPT_DIR.parent
-TXT_DIR = SKILL_DIR.parent / "中医古籍700本TXT"
+
+# 环境变量优先，否则用默认相对路径
+DEFAULT_TXT_DIR = SKILL_DIR.parent / "中医古籍700本TXT"
+TXT_DIR = Path(os.environ.get("TCM_TXT_DIR", str(DEFAULT_TXT_DIR)))
 
 CATEGORIES = {
     "本草": ["本草", "药性", "药鉴", "药征", "药症", "炮炙", "炮制", "食疗", "食鉴", "饮膳", "滇南", "海药", "本经"],
@@ -43,8 +49,44 @@ CATEGORIES = {
     "现代": ["思考中医", "中医之钥", "民间", "澄空"],
 }
 
+TXT_HELP = """
+========================================
+  未找到中医古籍文本文件！
+========================================
+
+请将 700 本中医古籍 TXT 文件放到以下目录：
+
+    {txt_dir}
+
+或设置环境变量 TCM_TXT_DIR 指向你的古籍目录：
+
+    PowerShell:
+      $env:TCM_TXT_DIR = "你的古籍目录路径"
+
+    CMD:
+      set TCM_TXT_DIR=你的古籍目录路径
+
+    Linux/Mac:
+      export TCM_TXT_DIR="你的古籍目录路径"
+
+文件命名格式: 编号-书名-朝代-作者.txt
+例如: 013-本草纲目-明-李时珍.txt
+========================================
+"""
+
+def check_txt_dir():
+    """Check if TXT directory exists and has files."""
+    if not TXT_DIR.exists():
+        print(TXT_HELP.format(txt_dir=TXT_DIR), file=sys.stderr)
+        sys.exit(1)
+    txts = list(TXT_DIR.glob("*.txt"))
+    if not txts:
+        print(TXT_HELP.format(txt_dir=TXT_DIR), file=sys.stderr)
+        sys.exit(1)
+    return True
+
 def detect_encoding(filepath):
-    """Detect file encoding via BOM or content heuristics."""
+    """Detect file encoding via BOM."""
     with open(filepath, 'rb') as f:
         head = f.read(4)
     if head[:3] == b'\xef\xbb\xbf':
@@ -80,7 +122,6 @@ def build_file_list(category=None):
 def search_texts(query, max_results=15, context_lines=3, category=None):
     files = build_file_list(category)
     results = []
-    query_lower = query.lower()
 
     for filepath, name, cat in files:
         try:
@@ -108,7 +149,6 @@ def search_texts(query, max_results=15, context_lines=3, category=None):
         if len(results) >= max_results * 3:
             break
     
-    # deduplicate
     seen = set()
     unique = []
     for r in results:
@@ -135,7 +175,6 @@ def search_multi_keywords(keywords, max_results=20, context_lines=3, category=No
             if not any(kw in content for kw in keywords):
                 continue
 
-        # Find best context around keyword matches
         best_positions = []
         for kw in keywords:
             if kw not in content:
@@ -179,6 +218,7 @@ def list_texts(category=None):
     return [(name, cat) for _, name, cat in build_file_list(category)]
 
 def main():
+    # Allow --list-* to work even without TXT files (they read from metadata)
     parser = argparse.ArgumentParser(description="Search TCM classical texts")
     parser.add_argument("query", nargs="?", help="Search query")
     parser.add_argument("--max-results", "-n", type=int, default=15)
@@ -191,6 +231,9 @@ def main():
     parser.add_argument("--json", action="store_true")
     
     args = parser.parse_args()
+    
+    # Always check TXT dir first, except for help-like flags
+    check_txt_dir()
     
     if args.list_categories:
         cats = list_categories()
