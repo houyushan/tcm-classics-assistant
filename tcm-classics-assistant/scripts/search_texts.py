@@ -1,17 +1,60 @@
 ﻿#!/usr/bin/env python3
-"""Search 700+ TCM classical texts with relevance ranking.
+"""
+TCM Classics Search Engine — World-class TCM text retrieval.
+
+Modes:
+  --mode herb      草药查询：搜本草文献，提取性味归经功效主治
+  --mode formula   方剂查询：搜方书，提取组成、功效、主治
+  --mode disease   病症查询：搜病机证候，给出历代辨治论述
+  --mode differential  辨证查询：多源交叉对照，梳理各家异同
+  --mode full      全文搜索（默认）
 
 Usage:
-    python search_texts.py "<query>" [--max-results N] [--category CAT] [--json]
-    python search_texts.py --keywords "A" "B" --mode all [--category CAT]
-    python search_texts.py --list-categories / --list-texts [CAT]
+  python search_texts.py "<query>" --mode herb [--dynasty 唐] [--json]
+  python search_texts.py --keywords "头痛" "发热" --mode disease
+  python search_texts.py --list-categories / --list-texts
 """
-import os, re, sys, argparse, json
+import os, re, sys, json, time, argparse
 from pathlib import Path
+from collections import Counter
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SKILL_DIR = SCRIPT_DIR.parent
 TXT_DIR = Path(os.environ.get("TCM_TXT_DIR", str(SKILL_DIR.parent / "中医古籍700本TXT")))
+INDEX_PATH = SCRIPT_DIR / "tcm_index.json"
+
+# -- load index --
+
+_index = None
+
+def load_index():
+    global _index
+    if _index is not None: return _index
+    if INDEX_PATH.exists():
+        try:
+            _index = json.loads(INDEX_PATH.read_text(encoding='utf-8'))
+            return _index
+        except: pass
+    return None
+
+# -- encoding --
+
+def detect_encoding(fp):
+    with open(fp, 'rb') as f: h = f.read(4)
+    if h[:3] == b'\xef\xbb\xbf': return 'utf-8-sig'
+    if h[:2] == b'\xff\xfe':     return 'utf-16-le'
+    if h[:2] == b'\xfe\xff':     return 'utf-16-be'
+    return 'gbk'
+
+def read_file(fp):
+    return open(fp, 'r', encoding=detect_encoding(fp), errors='replace').read().replace('\ufeff','').replace('\x00','')
+
+def ensure_dir():
+    if not TXT_DIR.exists() or not list(TXT_DIR.glob("*.txt")):
+        print(f"\n古籍未找到: {TXT_DIR}\n设 $env:TCM_TXT_DIR 指向你的古籍目录", file=sys.stderr)
+        sys.exit(1)
+
+# -- categories and filtering --
 
 CATEGORIES = {
     "本草": ["本草","药性","药鉴","药征","药症","炮炙","炮制","食疗","食鉴","饮膳","滇南","海药","本经"],
@@ -36,161 +79,384 @@ CATEGORIES = {
     "现代": ["思考中医","中医之钥","民间","澄空"],
 }
 
-HELP_MSG = """========================================
-  TCM古籍未找到！
-  请放置到: {txt_dir}
-  或: $env:TCM_TXT_DIR = "你的路径"
-========================================
-"""
+# Dynasty priority for authoritative texts
+DYNASTY_RANK = {"汉":10,"晋":9,"唐":9,"宋":8,"金":8,"元":8,"明":7,"清":7}
 
-def die(msg): print(msg.format(txt_dir=TXT_DIR), file=sys.stderr); sys.exit(1)
-
-def detect_encoding(fp):
-    with open(fp, 'rb') as f: h = f.read(4)
-    if h[:3] == b'\xef\xbb\xbf': return 'utf-8-sig'
-    if h[:2] == b'\xff\xfe':     return 'utf-16-le'
-    if h[:2] == b'\xfe\xff':     return 'utf-16-be'
-    return 'gbk'
-
-def read_file(fp):
-    text = open(fp, 'r', encoding=detect_encoding(fp), errors='replace').read()
-    # Strip BOM and null chars
-    return text.replace('\ufeff', '').replace('\x00', '')
-
-def get_category(fname):
-    for cat, kws in CATEGORIES.items():
-        for kw in kws:
-            if kw in fname: return cat
+def categorize(fname): 
+    for c,k in CATEGORIES.items():
+        for kw in k:
+            if kw in fname: return c
     return "其他"
 
-def build_files(category=None):
-    fs = [(f, f.stem, get_category(f.name)) for f in TXT_DIR.glob("*.txt")
-          if not category or get_category(f.name) == category]
-    return sorted(fs, key=lambda x: x[1])
+def get_files(category=None, dynasties=None):
+    """Get file list, optionally using index for filtering."""
+    idx = load_index()
+    files = []
+    if idx:
+        for entry in idx["files"]:
+            if category and entry["category"] != category: continue
+            if dynasties and entry["dynasty"] not in dynasties: continue
+            fp = TXT_DIR / entry["filename"]
+            if fp.exists():
+                files.append((fp, entry["stem"], entry["category"], entry.get("dynasty",""), entry.get("author","")))
+    else:
+        for fp in TXT_DIR.glob("*.txt"):
+            c = categorize(fp.name)
+            if category and c != category: continue
+            files.append((fp, fp.stem, c, "", ""))
+    return sorted(files, key=lambda x: x[1])
 
-def ensure_dir():
-    if not TXT_DIR.exists() or not list(TXT_DIR.glob("*.txt")): die(HELP_MSG)
+def sort_by_authority(files):
+    """Rank files: primary sources (汉唐) > commentaries (宋元) > later (明清)."""
+    def rank(f):
+        dyn = f[3]
+        return DYNASTY_RANK.get(dyn, 5)
+    return sorted(files, key=lambda f: -rank(f))
 
-# ---- relevance ----
+# -- snippet extraction --
 
-def score_match(query, content, pos, fname):
-    s = 0
-    s += 10 if query in content else 0
-    window = content[max(0,pos-200):min(len(content),pos+200)]
-    s += min(window.count(query), 8) * 2
-    s += int(max(0, 1.0 - pos/max(len(content),1)) * 15)
-    if query in fname: s += 12
-    return s
-
-def best_snippet(content, pos, qlen):
-    start = max(0, pos - 200)
+def best_snippet(content, pos, qlen, target_term=None):
+    """Extract paragraph around match, extending to section boundaries."""
+    start = max(0, pos - 150)
     end = min(len(content), pos + qlen + 300)
-    # Extend to paragraph boundaries
     before = content.rfind('\n\n', 0, start)
     start = max(0, before+2) if before >= 0 else start
     after = content.find('\n\n', end)
     end = after if after >= 0 else end
     snip = content[start:end].strip()
-    return snip[:800] + ("\n  ..." if len(snip)>800 else "")
+    # Highlight the search term if provided
+    return snip[:1000] + ("\n  ..." if len(snip)>1000 else "")
 
-# ---- search ----
+# -- HERB mode --
 
-def search(query, max_results=15, category=None):
-    ensure_dir()
-    raw = []
-    for fp, name, cat in build_files(category):
+def search_herb(query, max_results=10):
+    """Search for herb information in 本草 texts."""
+    files = get_files(category="本草")
+    files = sort_by_authority(files)
+    results = []
+    
+    for fp, name, cat, dyn, auth in files:
         try: content = read_file(fp)
         except: continue
         if query not in content: continue
+        
+        # Find all matches and their contexts
         for m in re.finditer(re.escape(query), content):
             pos = m.start()
-            raw.append({
-                'file':name, 'category':cat,
-                'score':score_match(query, content, pos, name),
-                'snippet':best_snippet(content, pos, len(query))
+            ctx = best_snippet(content, pos, len(query))
+            # Score: higher for earlier matches (usually definition section)
+            score = 1.0 - (pos / max(len(content), 1))
+            # Boost if near 性味/归经/主治 keywords
+            nearby = content[max(0,pos-100):pos+len(query)+100]
+            for kw in ['味','性','归经','主治','功效','治','主','无毒','有毒','大毒','小毒']:
+                if kw in nearby: score += 0.2
+            
+            results.append({
+                'file': name, 'category': cat, 'dynasty': dyn, 'author': auth,
+                'score': score, 'snippet': ctx
             })
-    if not raw: return []
-    raw.sort(key=lambda x:-x['score'])
-    # Per-file: keep top 2, dedup by snippet prefix
-    seen = {}; uniq = []
-    for r in raw:
-        fn = r['file']
-        seen.setdefault(fn, 0)
-        if seen[fn] >= 2: continue
-        if any(p['file']==fn and p['snippet'][:80]==r['snippet'][:80] for p in uniq): continue
-        seen[fn] += 1; uniq.append(r)
+    
+    # Deduplicate and sort
+    results.sort(key=lambda r: -r['score'])
+    seen = set(); uniq = []
+    for r in results:
+        key = r['snippet'][:100]
+        if key in seen: continue
+        seen.add(key); uniq.append(r)
         if len(uniq) >= max_results: break
-    return [{'file':r['file'],'category':r['category'],'snippet':r['snippet']} for r in uniq]
+    
+    return [{'file':r['file'],'dynasty':r['dynasty'],'author':r['author'],
+             'category':r['category'],'snippet':r['snippet']} for r in uniq]
 
-def search_multi(keywords, max_results=20, category=None, mode="any"):
-    ensure_dir()
+# -- FORMULA mode --
+
+FORMULA_HEADERS = re.compile(
+    r'([\u4e00-\u9fff]{2,10}(?:汤|散|丸|丹|饮|膏|煎))'
+    r'[\s\S]{0,100}?(?:方|组成|\n[\u4e00-\u9fff()（）\d两钱分斤枚个片克升合])'
+)
+
+def search_formula(query, max_results=10):
+    """Search for formula composition and usage."""
+    files = get_files(category=None)  # search all categories for formulas
+    files = sort_by_authority(files)
     results = []
-    for fp, name, cat in build_files(category):
+    
+    for fp, name, cat, dyn, auth in files:
         try: content = read_file(fp)
         except: continue
-        if mode=="all":
-            if not all(kw in content for kw in keywords): continue
-        else:
-            if not any(kw in content for kw in keywords): continue
-        # Score by combined density, penalize extremely common hits
-        score = sum(content.count(kw) for kw in keywords)
-        # Skip files with excessive matches (>500 matches = too generic)
-        if score > 500: continue
-        best = min((content.find(kw), kw) for kw in keywords if kw in content)
-        pos, kw = best
-        results.append({'file':name,'category':cat,'score':score,
-                        'snippet':best_snippet(content, pos, len(kw))})
-    results.sort(key=lambda x:-x['score'])
-    per_file = {}
-    out = []
+        if query not in content: continue
+        
+        # Find formula entries (structured look)
+        for m in re.finditer(re.escape(query), content):
+            pos = m.start()
+            # Look backward for the formula header
+            header_start = max(0, pos - 30)
+            header = content[header_start:pos].strip()
+            # Extract full context
+            ctx = best_snippet(content, pos, len(query))
+            # Heuristic: formulas usually have ingredient lists with 两/钱/分
+            nearby = content[pos:pos+500]
+            has_dosage = bool(re.search(r'[一两钱分斤枚个片升合]', nearby))
+            
+            results.append({
+                'file': name, 'category': cat, 'dynasty': dyn, 'author': auth,
+                'score': (2 if has_dosage else 1) + (10 if dyn in ['汉','唐'] else 5),
+                'has_dosage': has_dosage,
+                'snippet': ctx
+            })
+    
+    results.sort(key=lambda r: (-r['has_dosage'], -r['score']))
+    seen = set(); uniq = []
+    for r in results:
+        key = r['snippet'][:100]
+        if key in seen: continue
+        seen.add(key); uniq.append(r)
+        if len(uniq) >= max_results: break
+    
+    return [{'file':r['file'],'dynasty':r['dynasty'],'author':r['author'],
+             'category':r['category'],'snippet':r['snippet'],
+             'has_dosage':r['has_dosage']} for r in uniq]
+
+# -- DISEASE mode --
+
+def search_disease(query, max_results=12):
+    """Search for disease patterns across 伤寒/金匮/温病/综合."""
+    # Priority categories for disease queries
+    priority_cats = ["伤寒","金匮","温病","综合医论","医案","方剂","诊法"]
+    results = []
+    
+    for cat in priority_cats:
+        files = get_files(category=cat)
+        files = sort_by_authority(files)
+        
+        for fp, name, _, dyn, auth in files:
+            try: content = read_file(fp)
+            except: continue
+            if query not in content: continue
+            
+            for m in re.finditer(re.escape(query), content):
+                pos = m.start()
+                ctx = best_snippet(content, pos, len(query))
+                
+                # Relevance scoring for disease context
+                score = 0
+                nearby = content[max(0,pos-100):pos+len(query)+200]
+                # Clinical relevance markers
+                for kw in ['脉','证','治','主之','宜','与','方']:
+                    if kw in nearby: score += 1
+                if any(kw in nearby for kw in ['发热','恶寒','汗','痛','渴','烦','呕']):
+                    score += 3
+                
+                results.append({
+                    'file': name, 'category': cat, 'dynasty': dyn, 'author': auth,
+                    'score': score, 'snippet': ctx
+                })
+    
+    results.sort(key=lambda r: -r['score'])
+    # Per-category: keep best 2
+    seen_cat = {}; uniq = []
+    for r in results:
+        c = r['category']
+        seen_cat[c] = seen_cat.get(c, 0) + 1
+        if seen_cat[c] > 2: continue
+        key = r['snippet'][:100]
+        if key in [u['snippet'][:100] for u in uniq]: continue
+        uniq.append(r)
+        if len(uniq) >= max_results: break
+    
+    return [{'file':r['file'],'dynasty':r['dynasty'],'author':r['author'],
+             'category':r['category'],'snippet':r['snippet']} for r in uniq]
+
+# -- DIFFERENTIAL mode --
+
+def search_differential(keywords, max_results=15):
+    """Cross-reference multiple sources for differential diagnosis."""
+    results = []
+    cats_to_search = ["伤寒","金匮","温病","综合医论","医案","诊法"]
+    
+    for cat in cats_to_search:
+        files = get_files(category=cat)
+        files = sort_by_authority(files)
+        
+        for fp, name, _, dyn, auth in files:
+            try: content = read_file(fp)
+            except: continue
+            
+            matches = sum(1 for kw in keywords if kw in content)
+            if matches < len(keywords): continue
+            
+            # Find best context
+            best_pos = 0; best_score = 0
+            for kw in keywords:
+                for m in re.finditer(re.escape(kw), content):
+                    pos = m.start()
+                    # Score: proximity of all keywords
+                    nearby = content[max(0,pos-300):pos+len(kw)+300]
+                    kw_score = sum(nearby.count(k) for k in keywords) * 3
+                    if kw_score > best_score:
+                        best_score = kw_score
+                        best_pos = pos
+            
+            ctx = best_snippet(content, best_pos, len(keywords[0]))
+            
+            results.append({
+                'file': name, 'category': cat, 'dynasty': dyn, 'author': auth,
+                'score': best_score, 'snippet': ctx
+            })
+    
+    results.sort(key=lambda r: -r['score'])
+    seen = set(); uniq = []
+    for r in results:
+        key = r['snippet'][:100]
+        if key in seen: continue
+        seen.add(key); uniq.append(r)
+        if len(uniq) >= max_results: break
+    
+    return [{'file':r['file'],'dynasty':r['dynasty'],'author':r['author'],
+             'category':r['category'],'snippet':r['snippet']} for r in uniq]
+
+# -- FULL TEXT mode (default) --
+
+def search_full(query, max_results=15, category=None, dynasties=None):
+    """Full-text search across all texts with relevance ranking."""
+    files = get_files(category, dynasties)
+    results = []
+    
+    for fp, name, cat, dyn, auth in files:
+        try: content = read_file(fp)
+        except: continue
+        if query not in content: continue
+        
+        for m in re.finditer(re.escape(query), content):
+            pos = m.start()
+            count = content.count(query)
+            # Score
+            score = 0
+            score += min(count, 20)
+            score += int(max(0, 1.0 - pos/max(len(content),1)) * 10)
+            score += DYNASTY_RANK.get(dyn, 5)
+            
+            ctx = best_snippet(content, pos, len(query))
+            results.append({
+                'file': name, 'category': cat, 'dynasty': dyn, 'author': auth,
+                'score': score, 'snippet': ctx
+            })
+    
+    results.sort(key=lambda r: -r['score'])
+    seen_files = {}; uniq = []
     for r in results:
         fn = r['file']
-        if per_file.get(fn, 0) >= 1: continue
-        if any(p['file']==fn and p['snippet'][:80]==r['snippet'][:80] for p in out): continue
-        per_file[fn] = per_file.get(fn,0) + 1; out.append(r)
-        if len(out) >= max_results: break
-    return [{'file':r['file'],'category':r['category'],'snippet':r['snippet']} for r in out]
+        seen_files[fn] = seen_files.get(fn, 0) + 1
+        if seen_files[fn] > 2: continue
+        key = r['snippet'][:100]
+        if key in [u['snippet'][:100] for u in uniq]: continue
+        uniq.append(r)
+        if len(uniq) >= max_results: break
+    
+    return [{'file':r['file'],'dynasty':r['dynasty'],'author':r['author'],
+             'category':r['category'],'snippet':r['snippet']} for r in uniq]
 
-def list_cats():
-    ensure_dir()
-    cats = {}
-    for _,_,c in build_files(): cats[c]=cats.get(c,0)+1
-    return cats
+# -- output --
+
+def print_results(results, mode=""):
+    if not results:
+        print("\n无匹配结果。")
+        return
+    header = {"herb":"草药查询","formula":"方剂查询","disease":"病症查询",
+              "differential":"辨证对照","full":"全文搜索"}.get(mode, mode)
+    print(f"\n{'='*60}")
+    print(f"  {header}  ·  {len(results)} 条结果")
+    print(f"{'='*60}")
+    
+    for i, r in enumerate(results, 1):
+        dyn = f" · {r.get('dynasty','')}" if r.get('dynasty') else ""
+        auth = f" · {r.get('author','')}" if r.get('author') else ""
+        dosage = " [剂量]含剂量" if r.get('has_dosage') else ""
+        print(f"\n── [{i}] [{r['category']}]{dyn}{auth} ── {r['file']}{dosage}")
+        print(r['snippet'])
+
+# -- CLI --
 
 def main():
-    p = argparse.ArgumentParser(description="搜索中医古籍")
+    # Force UTF-8 output on Windows
+    if sys.platform == 'win32':
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    p = argparse.ArgumentParser(description="TCM古籍搜索引擎")
     p.add_argument("query", nargs="?")
-    p.add_argument("--max-results","-n", type=int, default=15)
+    p.add_argument("--mode","-M", choices=["herb","formula","disease","differential","full"], default="full",
+                   help="搜索模式: herb/formula/disease/differential/full")
+    p.add_argument("--max-results","-n", type=int, default=12)
     p.add_argument("--category","-C")
+    p.add_argument("--dynasty","-d", help="朝代过滤 (汉/唐/宋/金/元/明/清), 逗号分隔")
     p.add_argument("--keywords","-k", nargs="+")
-    p.add_argument("--mode","-m", choices=["any","all"], default="any")
+    p.add_argument("--json", action="store_true")
     p.add_argument("--list-categories", action="store_true")
     p.add_argument("--list-texts", nargs="?", const="__ALL__")
-    p.add_argument("--json", action="store_true")
+    p.add_argument("--build-index", action="store_true", help="(Re)build search index")
     args = p.parse_args()
     
-    if args.list_categories:
-        for cat,n in sorted(list_cats().items(), key=lambda x:-x[1]): print(f"  {cat}: {n}卷")
+    # Build index
+    if args.build_index:
+        from build_index import build_index
+        build_index()
         return
-    if args.list_texts is not None:
-        for name,c in build_files(None if args.list_texts=="__ALL__" else args.list_texts):
-            print(f"  [{c}] {name}")
-        return
-    if not args.query and not args.keywords: p.print_help(); return
     
-    results = (search_multi(args.keywords, args.max_results, args.category, args.mode)
-               if args.keywords
-               else search(args.query, args.max_results, args.category))
+    # List modes (no TXT dir needed for index-based listing)
+    if args.list_categories:
+        idx = load_index()
+        if idx:
+            for c,n in sorted(idx["categories"].items(), key=lambda x:-x[1]):
+                print(f"  {c}: {n}卷")
+        else:
+            ensure_dir()
+            cats = {}
+            for _,_,c in get_files(): cats[c]=cats.get(c,0)+1
+            for c,n in sorted(cats.items(), key=lambda x:-x[1]): print(f"  {c}: {n}卷")
+        return
+    
+    if args.list_texts is not None:
+        idx = load_index()
+        if idx:
+            cat = None if args.list_texts=="__ALL__" else args.list_texts
+            for e in idx["files"]:
+                if cat and e["category"]!=cat: continue
+                print(f"  [{e['category']}] {e['filename']}")
+        else:
+            ensure_dir(); cat = None if args.list_texts=="__ALL__" else args.list_texts
+            for n,c in [(fp.stem,c) for fp,_,c in get_files(cat)]: print(f"  [{c}] {n}")
+        return
+    
+    if not args.query and not args.keywords:
+        p.print_help()
+        return
+    
+    ensure_dir()
+    
+    dynasties = None
+    if args.dynasty:
+        dynasties = set(args.dynasty.split(","))
+    
+    # Route to mode
+    mode = args.mode
+    if args.keywords and mode == "full":
+        mode = "differential"  # multi-keyword default → differential
+    
+    if mode == "herb":
+        results = search_herb(args.query, args.max_results)
+    elif mode == "formula":
+        results = search_formula(args.query, args.max_results)
+    elif mode == "disease":
+        results = search_disease(args.query, args.max_results)
+    elif mode == "differential":
+        kws = args.keywords or [args.query]
+        results = search_differential(kws, args.max_results)
+    else:
+        results = search_full(args.query, args.max_results, args.category, dynasties)
     
     if args.json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
     else:
-        for i,r in enumerate(results,1):
-            print(f"\n{'='*55}\n  [{i}] [{r['category']}] {r['file']}\n{'='*55}")
-            print(r['snippet'])
-    if not results:
-        q = args.query or ' '.join(args.keywords or [])
-        print(f"\n未找到与'{q}'相关的结果。")
+        print_results(results, mode)
 
 if __name__ == "__main__":
     main()
