@@ -377,6 +377,46 @@ def print_results(results, mode=""):
 
 # -- CLI --
 
+
+def print_status():
+    """Print skill readiness status."""
+    idx = load_index()
+    txt_ok = TXT_DIR.exists() and bool(list(TXT_DIR.glob("*.txt")))
+    
+    print()
+    print("  ========================================")
+    print("   中医古籍助手 - 状态检查")
+    print("  ========================================")
+    
+    if txt_ok:
+        count = len(list(TXT_DIR.glob("*.txt")))
+        size_mb = round(sum(f.stat().st_size for f in TXT_DIR.glob("*.txt")) / (1024*1024), 1)
+        print(f"  古籍文本  [OK] {count} 文件, {size_mb} MB")
+        print(f"  文本目录    {TXT_DIR}")
+    else:
+        print("  古籍文本  [MISSING]")
+        print(f"  预期目录    {TXT_DIR}")
+        print("  请将 700 本 TXT 放入该目录，或设置 TCM_TXT_DIR 环境变量")
+    
+    if idx:
+        print(f"  搜索索引  [OK] {idx['total_files']} 文件已索引, {idx['total_size_mb']} MB")
+        print(f"  构建时间    {idx.get('build_time','unknown')}")
+    else:
+        print("  搜索索引  [NOT BUILT] 运行 build_index.py 以加速搜索")
+    
+    if idx:
+        cats = idx.get("categories", {})
+        major = sorted(cats.items(), key=lambda x: -x[1])
+        top5 = " | ".join(f"{c}:{n}" for c, n in major[:5])
+        print(f"  分类({len(major)}):  {top5} ...")
+    
+    print()
+    print("  使用方式: 在 Codex 中用中文提问中医相关问题即可自动触发")
+    print("  手动搜索: python scripts/search_texts.py '<关键词>' --mode herb|formula|disease|differential")
+    print("  ========================================")
+    print()
+
+
 def main():
     # Force UTF-8 output on Windows
     if sys.platform == 'win32':
@@ -392,9 +432,15 @@ def main():
     p.add_argument("--json", action="store_true")
     p.add_argument("--list-categories", action="store_true")
     p.add_argument("--list-texts", nargs="?", const="__ALL__")
+    p.add_argument("--status", action="store_true", help="Check if skill is ready to use")
     p.add_argument("--build-index", action="store_true", help="(Re)build search index")
     args = p.parse_args()
     
+    # Status check
+    if args.status:
+        print_status()
+        return
+
     # Build index
     if args.build_index:
         from build_index import build_index

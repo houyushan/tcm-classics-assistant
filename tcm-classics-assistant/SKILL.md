@@ -19,6 +19,11 @@ a 理→法→方→药 thinking chain.
 
 ## Quick Setup
 
+Check readiness anytime:
+`ash
+python scripts/search_texts.py --status
+`
+
 ```powershell
 # Place TXT files next to this skill, or set env var:
 $env:TCM_TXT_DIR = "path/to/中医古籍700本TXT"
