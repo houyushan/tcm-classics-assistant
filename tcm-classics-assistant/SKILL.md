@@ -104,6 +104,26 @@ Rank sources by authority when presenting findings:
 
 Always cite: **书名 · 朝代 · 作者** for every claim.
 
+## Response Format
+
+**Every TCM response MUST start and end with these markers:**
+
+`
+> 中医古籍助手 · 已搜索 N 本古籍
+`
+
+At the end of every answer, include a citation block:
+
+`
+---
+📚 **引用古籍**：
+· 《书名》 · 朝代 · 作者
+· 《书名》 · 朝代 · 作者
+`
+
+This makes it visible to the user that the skill was activated and which texts were consulted.
+If the question is not TCM-related, skip the markers.
+
 ## Important Rules
 
 - Never claim the text corpus replaces clinical diagnosis (望闻问切)
