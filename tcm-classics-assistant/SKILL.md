@@ -15,140 +15,57 @@ description: >
 
 # TCM Classics Assistant
 
-Work with 700+ volumes of traditional Chinese medicine classical texts.
+Search 700+ volumes of TCM classical texts (汉 through 清 dynasty).
 
 ## Setup
 
-The skill searches `.txt` files in a **古籍目录**. You have two ways to point to it:
+古籍 TXT 文件需放在此 skill 同级的 `中医古籍700本TXT/`，或设 `$env:TCM_TXT_DIR`。
 
-### Option 1: Default path (recommended)
+## Search
 
-Put your 700-TXT collection next to this skill folder:
+**Always search before answering.** The search tool auto-detects encoding (GBK/UTF-16LE/UTF-8).
 
-```
-skills/
-├── tcm-classics-assistant/   ← this skill
-│   ├── SKILL.md
-│   ├── scripts/search_texts.py
-│   └── ...
-└── 中医古籍700本TXT/          ← your text files
-    ├── 000-神农本草经-清-孙星衍.txt
-    ├── 001-吴普本草-晋-吴普.txt
-    └── ...
-```
+```bash
+# Single keyword
+python scripts/search_texts.py "桂枝汤" --max-results 10
 
-### Option 2: Environment variable
+# Multi-keyword (all required)
+python scripts/search_texts.py --keywords "阴虚" "潮热" "盗汗" --mode all
 
-Set `TCM_TXT_DIR` to your custom path:
+# Category filter (本草/方剂/伤寒/金匮/内经/温病/诊法/女科/儿科/外科/针灸/医案/综合医论/眼科/喉科/养生)
+python scripts/search_texts.py "头痛" --category 伤寒
 
-```powershell
-$env:TCM_TXT_DIR = "D:\my-tcm-texts"
-```
-
-### Option 3: Symbolic link
-
-```powershell
-New-Item -ItemType Junction -Path "$env:USERPROFILE\.codex\skills\中医古籍700本TXT" -Target "你的古籍目录路径"
-```
-
-## Text Corpus
-
-- **Encoding**: GBK (majority), UTF-16LE, UTF-8-BOM (auto-detected)
-- **Total**: 700+ classical medical texts spanning Han dynasty through Qing dynasty
-- **File naming**: `编号-书名-朝代-作者.txt`
-
-### Primary Categories
-
-| Category | Count | Key Contents |
-|---|---|---|
-| 本草 (Materia Medica) | 55 | 神农本草经, 本草纲目, 本草经集注, 新修本草, etc. |
-| 方剂 (Formulas) | 111 | 伤寒杂病论, 千金方, 外台秘要, 太平惠民和剂局方, 汤头歌诀, etc. |
-| 伤寒 (Shang Han) | 44 | 注解伤寒论, 伤寒论条辨, 伤寒来苏集, 伤寒贯珠集, etc. |
-| 金匮 (Jin Gui) | 8 | 金匮要略注, 金匮方歌括, 金匮钩玄, etc. |
-| 内经 (Nei Jing) | 30 | 黄帝内经素问, 灵枢, 难经, 类经, etc. |
-| 温病 (Warm Disease) | 17 | 温病条辨, 温热论, 温疫论, 湿热病篇, etc. |
-| 诊法 (Diagnostics) | 34 | 脉经, 濒湖脉学, 四诊抉微, 望诊遵经, etc. |
-| 女科 (Gynecology) | 23 | 妇人大全良方, 傅青主女科, 女科要旨, etc. |
-| 儿科 (Pediatrics) | 22 | 小儿药证直诀, 幼科发挥, 幼幼集成, etc. |
-| 外科 (Surgery) | 23 | 外科正宗, 疡医大全, 正骨心法, etc. |
-| 针灸 (Acupuncture) | 26 | 针灸甲乙经, 针灸大成, 十四经发挥, etc. |
-| 医案 (Case Records) | 48 | 临证指南医案, 名医类案, 章次公医案, etc. |
-| 综合医论 (General) | 60 | 景岳全书, 医宗金鉴, 证治准绳, 医学心悟, etc. |
-
-## Search Tool
-
-Always run the search BEFORE answering TCM questions:
-
-```
-python scripts/search_texts.py "<query>" [--max-results 15] [--category CAT] [--json]
-python scripts/search_texts.py --keywords "term1" "term2" --mode all [--category CAT]
+# Browse
 python scripts/search_texts.py --list-categories
-python scripts/search_texts.py --list-texts [CATEGORY]
+python scripts/search_texts.py --list-texts 本草
 ```
 
-### Search Strategy
+## Workflow
 
-1. **Single keyword**: for herbs, formulas, diseases, or specific concepts
-   ```
-   python scripts/search_texts.py "桂枝汤" --max-results 10
-   ```
+1. **Search**: run `search_texts.py` with the user's key terms
+2. **Read**: pick 2-3 top-ranking results, `Get-Content` the full passage
+3. **Cross-reference**: search a second category for corroborating views (e.g. 本草 + 方剂, or 伤寒 + 医案)
+4. **Present**: cite source (书名-朝代-作者), explain TCM rationale, note era differences
 
-2. **Multi-keyword (all mode)**: narrow results by requiring all terms
-   ```
-   python scripts/search_texts.py --keywords "阴虚" "潮热" "盗汗" --mode all --max-results 5
-   ```
+## Corpus
 
-3. **Category-filtered**: target specific domain texts
-   ```
-   python scripts/search_texts.py "头痛" --category 伤寒 --max-results 8
-   ```
+| Category | ~Volumes | Top texts |
+|---|---|---|
+| 本草 | 55 | 神农本草经, 本草纲目, 本草经集注 |
+| 方剂 | 111 | 伤寒杂病论, 千金要方, 外台秘要, 太平惠民和剂局方 |
+| 伤寒 | 44 | 注解伤寒论, 伤寒来苏集, 伤寒贯珠集 |
+| 金匮 | 8 | 金匮要略注, 金匮钩玄 |
+| 内经 | 30 | 黄帝内经素问, 灵枢, 难经, 类经 |
+| 温病 | 17 | 温病条辨, 温热论, 温疫论 |
+| 诊法 | 34 | 脉经, 濒湖脉学, 四诊抉微 |
+| 针灸 | 26 | 针灸甲乙经, 针灸大成 |
+| 医案 | 48 | 临证指南医案, 名医类案 |
+| 综合医论 | 60 | 景岳全书, 医宗金鉴, 证治准绳, 医学心悟 |
+| 其他 | 130+ | 女科, 儿科, 外科, 眼科, 喉科, 养生 |
 
-4. **Broad exploration**: omit category filter when unsure where to look
+## Notes
 
-### After searching, ALWAYS:
-- Read the most relevant full text passage using `Get-Content` with proper encoding
-- Cross-reference multiple texts from different eras/categories
-- Cite the source text name and dynasty/author when presenting findings
-
-## TCM Domain Reference
-
-### Theoretical Framework
-
-- **八纲辨证** (Eight-Principle): 阴阳, 表里, 寒热, 虚实
-- **脏腑辨证** (Zang-Fu): 五脏 (心肝脾肺肾) + 六腑 (胆胃大肠小肠膀胱三焦)
-- **六经辨证** (Six-Channel): 太阳, 阳明, 少阳, 太阴, 少阴, 厥阴 — 伤寒论
-- **卫气营血辨证** (Four-Level): 卫, 气, 营, 血 — 温病学
-- **气血津液辨证**: Qi, Blood, Body Fluids
-- **病因** (Etiology): 六淫 (风寒暑湿燥火) + 七情 (喜怒忧思悲恐惊)
-
-### Key Classical Texts
-
-| Era | Text | Author | Domain |
-|---|---|---|---|
-| 汉 | 神农本草经 | — | 本草 |
-| 汉 | 伤寒杂病论 | 张仲景 | 方剂/伤寒 |
-| 汉 | 黄帝内经 | — | 理论 |
-| 战国 | 难经 | 扁鹊 | 理论 |
-| 晋 | 脉经 | 王叔和 | 诊法 |
-| 隋 | 诸病源候论 | 巢元方 | 病因 |
-| 唐 | 千金要方/千金翼方 | 孙思邈 | 方剂 |
-| 宋 | 太平惠民和剂局方 | 陈承 | 方剂 |
-| 金元 | 脾胃论 | 李东垣 | 医论 |
-| 明 | 本草纲目 | 李时珍 | 本草 |
-| 清 | 温病条辨 | 吴鞠通 | 温病 |
-| 清 | 医宗金鉴 | 吴谦 | 综合 |
-
-### Answering Protocol
-
-1. **Search**: Run `search_texts.py` on the user's question keywords
-2. **Read**: Open 2-3 most relevant texts for full context
-3. **Analyze**: Synthesize across multiple sources; note era differences
-4. **Present**: Cite specific text + author, explain TCM rationale
-5. **Cross-check**: When appropriate, search another category for corroborating views
-
-### Important Notes
-
-- Classical Chinese medical texts use specialized terminology
-- Ming-Qing era texts often comment on earlier Han-Tang theories
-- Different medical schools (伤寒派, 温病派, 补土派) may disagree — present both
-- Always distinguish between classical source and personal opinion
+- Prefer authoritative texts: 伤寒→张仲景原本, 本草→神农本草经/本草纲目, 诊断→脉经/濒湖脉学
+- Ming-Qing texts often critique Han-Tang theories — present both perspectives
+- Different medical schools may conflict — note the school (伤寒派/温病派/补土派 etc.)
+- Use `--json` for machine-readable output when chaining searches
